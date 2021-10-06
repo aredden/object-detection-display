@@ -5,7 +5,11 @@ import mss
 import numpy as np
 import torch
 from queue import Queue
-from threading import Thread
+from threading import Lock, Thread
+
+"""
+Copy of main.py with locks included instead of using the built-in auto queue locks.
+"""
 
 global DEVICE
 global DESIRED_FPS
@@ -18,11 +22,11 @@ GLOBAL VARIABLES THAT CAN BE ADJUSTED!
 # Change to 'cpu' for cpu inference.
 DEVICE = "cuda"  
 # Change to lower number like ~10-30 if you want for slower fps and less cpu / gpu usage.
-DESIRED_FPS = 10
+DESIRED_FPS = 100  
 # Screenshot capture area on the screen (single monitor)
 DESIRED_SCREEN = {"top": 0, "left": 0, "width": 1920, "height": 1080} 
 # Size after resizing from DESIRED_SCREEN
-DESIRED_INFERENCE_SIZE = (1280, 720)  
+DESIRED_INFERENCE_SIZE = (1280, 720)
 # Model name to pull from torch hub. Models are described / documented on this page: https://github.com/ultralytics/yolov5/releases
 YOLOV5_MODEL_NAME = "yolov5m6"
 
@@ -40,20 +44,21 @@ class ScreenShotter(Thread):
     Thread for screenshots with the 'mss' library.
     """
 
-    def __init__(self, screenshot_queue: Queue):
+    def __init__(self, screenshot_queue: Queue, screenshot_lock:Lock):
         Thread.__init__(self, daemon=True)
         global DESIRED_SCREEN
         self.images = []
         self.stopped = False
         self.screen = DESIRED_SCREEN
         self.screenshot_queue = screenshot_queue
+        self.screenshot_lock = screenshot_lock
 
     def run(self):
         global DESIRED_INFERENCE_SIZE
         with mss.mss() as sct:
             while not self.stopped:
                 if self.screenshot_queue.full():
-                    time.sleep(0.03)
+                    time.sleep(0.01)
                     continue
                 # Grab image from the screen using the values defined by self.screen
                 img_np = np.asarray(sct.grab(self.screen), dtype=np.uint8)
@@ -61,14 +66,16 @@ class ScreenShotter(Thread):
                 img_np = cv2.resize(
                     img_np, DESIRED_INFERENCE_SIZE, interpolation=cv2.INTER_LINEAR
                 )  # resize
-                self.screenshot_queue.put(img_np, block=True, timeout=5)
-
+                while not self.screenshot_lock.acquire(blocking=False):
+                    time.sleep(0.01)
+                self.screenshot_queue.put(img_np)
+                self.screenshot_lock.release()
 
 class ImgInference(Thread):
     """
     Thread for YoloV5 inference and CV2 object outline drawing.
     """
-    def __init__(self, screenshot_queue: Queue, display_queue: Queue):
+    def __init__(self, screenshot_queue: Queue, display_queue: Queue, screenshot_lock:Lock, display_lock:Lock):
         Thread.__init__(self, daemon=True)
         global YOLOV5_MODEL_NAME
         global DEVICE
@@ -79,28 +86,27 @@ class ImgInference(Thread):
         self.stopped = False
         self.model = torch.hub.load("ultralytics/yolov5", YOLOV5_MODEL_NAME).half().to(DEVICE)
         self.done = True
+        self.screenshot_lock = screenshot_lock
+        self.display_lock = display_lock
 
     def run(self):
         while not self.stopped:
             # Get next image to infer from the ScreenShotter thread in the background.
-            img = self.screenshot_queue.get(
-                block=True, timeout=5
-            )  # read last screen image
+            while self.screenshot_queue.empty():
+                time.sleep(0.001)
 
+            while not self.screenshot_lock.acquire(blocking=False):
+                time.sleep(0.001)
+
+            img = self.screenshot_queue.get()  # read last screen image
+            self.screenshot_lock.release()
             # Get label names for predictions if loop has never run before.
             if len(self.names) == 0:
                 dat = self.model(img)
-                # Text labels array
                 self.names = dat.names
-                # Take the list of [minx, miny, maxx, maxy, confidence, text-label-index]
-                # result values "xyxy", and parse result as integer, send from gpu to cpu,
-                # and generate as a numpy array.
                 dat = dat.xyxy[0].int().cpu().numpy()
             else:
                 # If label names exist, make prediction slightly more efficiently.
-                
-                # Generate the detections and predictions on the gpu as tensors, and
-                # send to cpu -> numpy array in one line.
                 dat = self.model(img).xyxy[0].int().cpu().numpy()
 
             # Draw predicted bounding boxes and labels onto image.
@@ -122,9 +128,11 @@ class ImgInference(Thread):
                     thickness=1, # Thickness of font
                 )
 
-
             # Send back the prepared image to display in the main thread.
-            self.display_queue.put(img, block=True, timeout=5)
+            while not self.display_lock.acquire(blocking=False):
+                time.sleep(0.001)
+            self.display_queue.put_nowait(img)
+            self.display_lock.release()
 
             # Re-Queue the ScreenShotter to get another image from the screen.
             self.screenshot_queue.task_done()
@@ -134,29 +142,27 @@ class ImgInference(Thread):
 # Main program start thread.
 def run():
 
-    # Queue for storing screenshots to send to inference thread.
     screenshot_queue = Queue(maxsize=3)
-    # Queue for sending labeled screenshots to be displayed in main thread.
     display_queue = Queue(maxsize=3)
-    # Thread for retrieving screenshots from the screen.
-    screenShotter = ScreenShotter(screenshot_queue)
-    # Thread for object detection and labeling.
-    inference = ImgInference(screenshot_queue, display_queue)
-    # Wait for pytorch model to be loaded.
+    screenshot_lock = Lock()
+    display_lock = Lock()
+    screenShotter = ScreenShotter(screenshot_queue, screenshot_lock)
+    inference = ImgInference(screenshot_queue, display_queue, screenshot_lock, display_lock)
     while not inference.done:
         time.sleep(0.01)
-
-    # Initialize fps counter.
     frames = 0
-    
-    # Launch threads.
     inference.start()
     screenShotter.start()
-
-    # Begin the main loop infinetly until 'Q' is pressed.
     while True:
         # Get the most recently prepared image from the display_queue.
-        img = display_queue.get(block=True, timeout=5)
+        if display_queue.empty():
+            time.sleep(0.01)
+            continue
+
+        while not display_lock.acquire(blocking=False):
+            time.sleep(0.01)
+        img = display_queue.get_nowait()
+        display_lock.release()
         # If this is the first ieration, create the fps counter reference time.
         if frames == 0:
             last_time = time.time()
@@ -183,24 +189,23 @@ def run():
         if cv2.waitKey(4) & 0xFF == ord("q"):
             # Destroy all opencv windows when 'Q' is pressed.
             cv2.destroyAllWindows()
-            # Stop screenshot / inference threads.
             screenShotter.stopped = True
             inference.stopped = True
             break
 
-        # Calculate current FPS.
-        actual_fps = frames / (time.time() - last_time)
+        # # Calculate current FPS.
+        # actual_fps = frames / (time.time() - last_time)
 
-        # FPS LIMITER...
-        # If above desired fps, then put the thread to sleep for a short period of time.
-        if DESIRED_FPS < actual_fps:
+        # # FPS LIMITER...
+        # # If above desired fps, then put the thread to sleep for a short period of time.
+        # if DESIRED_FPS < actual_fps:
 
-            sleeptime = actual_fps - DESIRED_FPS
+        #     sleeptime = actual_fps - DESIRED_FPS
 
-            # If sleeptime is too large, shrink it to reduce stuttering.
-            if sleeptime > 0.02:
-                sleeptime = 0.02
-            time.sleep(sleeptime)
+        #     # If sleeptime is too large, shrink it to reduce stuttering.
+        #     if sleeptime > 0.02:
+        #         sleeptime = 0.02
+        #     time.sleep(sleeptime)
 
 
 if __name__ == "__main__":

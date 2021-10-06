@@ -31,7 +31,7 @@ DESIRED_FPS = 100
 # Screenshot capture area on the screen (single monitor)
 DESIRED_SCREEN = {"top": 0, "left": 0, "width": 1920, "height": 1080} 
 # Size after resizing from DESIRED_SCREEN
-DESIRED_INFERENCE_SIZE = (1280, 720)  
+DESIRED_INFERENCE_SIZE = (960, 540)
 # Model name to pull from torch hub. Models are described / documented on this page: https://github.com/ultralytics/yolov5
 YOLOV5_MODEL_NAME = "yolov5m6"
 ```
