@@ -46,14 +46,12 @@ class ScreenShotter(Thread):
 
     def __init__(self, screenshot_queue: Queue, screenshot_lock:Lock):
         Thread.__init__(self, daemon=True)
-        global DESIRED_SCREEN
-        self.images = []
         self.stopped = False
-        self.screen = DESIRED_SCREEN
         self.screenshot_queue = screenshot_queue
         self.screenshot_lock = screenshot_lock
 
     def run(self):
+        global DESIRED_SCREEN
         global DESIRED_INFERENCE_SIZE
         with mss.mss() as sct:
             while not self.stopped:
@@ -61,7 +59,7 @@ class ScreenShotter(Thread):
                     time.sleep(0.01)
                     continue
                 # Grab image from the screen using the values defined by self.screen
-                img_np = np.asarray(sct.grab(self.screen), dtype=np.uint8)
+                img_np = np.asarray(sct.grab(DESIRED_SCREEN), dtype=np.uint8)
                 # Resize the image and put it into the Screenshot queue.
                 img_np = cv2.resize(
                     img_np, DESIRED_INFERENCE_SIZE, interpolation=cv2.INTER_LINEAR

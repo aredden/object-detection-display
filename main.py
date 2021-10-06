@@ -145,7 +145,7 @@ def run():
     inference = ImgInference(screenshot_queue, display_queue)
     # Wait for pytorch model to be loaded.
     while not inference.done:
-        time.sleep(0.01)
+        time.sleep(0.05)
 
     # Initialize fps counter.
     frames = 0
