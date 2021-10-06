@@ -71,6 +71,7 @@ class ImgInference(Thread):
     def __init__(self, screenshot_queue: Queue, display_queue: Queue):
         Thread.__init__(self, daemon=True)
         global YOLOV5_MODEL_NAME
+        global DEVICE
         self.done = False
         self.display_queue = display_queue
         self.screenshot_queue = screenshot_queue
