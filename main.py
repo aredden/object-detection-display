@@ -30,7 +30,7 @@ if DEVICE == "cuda":
     try:
         assert torch.cuda.is_available()
     except AssertionError:
-        sys.exit("CUDA device isn't available. Either change 'DEVICE' variable to 'cpu'\n"+
+        sys.exit("CUDA device isn't available. Either change 'DEVICE' variable to 'cpu', or..\n"+
         "If you have a CUDA-Capable GPU, I recommend installing pytorch via a command on "+
         "the helper table on this page depending on your OS / package manager / computer platform:\n"+
         "https://pytorch.org/get-started/locally/")
@@ -42,21 +42,22 @@ class ScreenShotter(Thread):
 
     def __init__(self, screenshot_queue: Queue):
         Thread.__init__(self, daemon=True)
-        global DESIRED_SCREEN
-        self.images = []
         self.stopped = False
-        self.screen = DESIRED_SCREEN
         self.screenshot_queue = screenshot_queue
 
     def run(self):
         global DESIRED_INFERENCE_SIZE
+        global DESIRED_SCREEN
+        # Initialize the mss screenshot tool
         with mss.mss() as sct:
+            # Begin thread loop
             while not self.stopped:
+                # If screenshot queue is full, wait for free space to add new image.
                 if self.screenshot_queue.full():
                     time.sleep(0.03)
                     continue
                 # Grab image from the screen using the values defined by self.screen
-                img_np = np.asarray(sct.grab(self.screen), dtype=np.uint8)
+                img_np = np.asarray(sct.grab(DESIRED_SCREEN), dtype=np.uint8)
                 # Resize the image and put it into the Screenshot queue.
                 img_np = cv2.resize(
                     img_np, DESIRED_INFERENCE_SIZE, interpolation=cv2.INTER_LINEAR
