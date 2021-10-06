@@ -1,4 +1,4 @@
-# Real-Time & Fast Object Detection and Display
+# Real-Time & Fast Object Detection and Display with YoloV5
 
 Uses two threads and two queue's for fast model inference without spending time waiting for screenshots or images to be rendered to an opencv window.
 
