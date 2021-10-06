@@ -1,6 +1,6 @@
 # Real-Time & Fast Object Detection and Display with YoloV5
 
-Uses two threads and two queue's for fast model inference without spending time waiting for screenshots or images to be rendered to an opencv window.
+Uses three threads and three queue's for fast model inference without spending time waiting for screenshots or images with labels to be rendered to an opencv window.
 
 ## How it works
 
@@ -11,7 +11,11 @@ Uses two threads and two queue's for fast model inference without spending time 
 + Repeat ->
 ### Inference Thread: 
 + Get image from requires-inference queue -> 
-+ Feed image to model -> 
++ Feed image to model ->
++ Put image and image results onto draw-objects queue ->
++ Repeat ->
+### Draw Object Thread:
++ Get Image from draw-objects queue ->
 + Process result boxes and labels and draw them on image -> 
 + Add to prepared-screenshot queue -> 
 + Repeat ->

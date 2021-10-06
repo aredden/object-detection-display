@@ -18,11 +18,11 @@ GLOBAL VARIABLES THAT CAN BE ADJUSTED!
 # Change to 'cpu' for cpu inference.
 DEVICE = "cuda"  
 # Change to lower number like ~10-30 if you want for slower fps and less cpu / gpu usage.
-DESIRED_FPS = 10
+DESIRED_FPS = 40
 # Screenshot capture area on the screen (single monitor)
 DESIRED_SCREEN = {"top": 0, "left": 0, "width": 1920, "height": 1080} 
 # Size after resizing from DESIRED_SCREEN
-DESIRED_INFERENCE_SIZE = (1280, 720)  
+DESIRED_INFERENCE_SIZE = (960, 540)  
 # Model name to pull from torch hub. Models are described / documented on this page: https://github.com/ultralytics/yolov5/releases
 YOLOV5_MODEL_NAME = "yolov5m6"
 
@@ -69,12 +69,12 @@ class ImgInference(Thread):
     """
     Thread for YoloV5 inference and CV2 object outline drawing.
     """
-    def __init__(self, screenshot_queue: Queue, display_queue: Queue):
+    def __init__(self, screenshot_queue: Queue, draw_queue: Queue):
         Thread.__init__(self, daemon=True)
         global YOLOV5_MODEL_NAME
         global DEVICE
         self.done = False
-        self.display_queue = display_queue
+        self.draw_queue = draw_queue
         self.screenshot_queue = screenshot_queue
         self.names = []
         self.stopped = False
@@ -103,17 +103,39 @@ class ImgInference(Thread):
                 # Generate the detections and predictions on the gpu as tensors, and
                 # send to cpu -> numpy array in one line.
                 dat = self.model(img).xyxy[0].int().cpu().numpy()
+            
+            self.draw_queue.put({'img': img, 'dat': dat, 'names': self.names})
+            self.screenshot_queue.task_done()
+            # Re-Queue the ScreenShotter to get another image from the screen.
+            
 
+class DrawObjects(Thread):
+    """
+    Thread for drawing object detection boxes and labels onto screenshots.
+    """
+    def __init__(self, draw_queue:Queue, display_queue: Queue):
+        Thread.__init__(self, daemon=True)
+        self.stopped = False
+        self.draw_queue = draw_queue
+        self.display_queue = display_queue
+
+    def run(self):
+
+        while not self.stopped:
+            outputs = self.draw_queue.get(block=True, timeout=5)
+            img = outputs['img']
+            dat = outputs['dat']
+            names = outputs['names']
             # Draw predicted bounding boxes and labels onto image.
             for row in dat:
                 # The name of the object in this 'box' is the last value in the dat array, 
                 # which is in the form of the integer index of the text label in the 'names' list.
-                name = self.names[row[-1]]
+                name = names[row[-1]]
                 # First four values in the row array represent the left-top, and right-bottom points respectively.
                 xmin, ymin, xmax, ymax = row[:4]
                 # Draw rectangle onto image, and the label within it.
-                cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (90, 10, 255), 1)
-                cv2.putText(
+                img = cv2.rectangle(img, (xmin, ymin), (xmax, ymax), (90, 10, 255), 1)
+                img = cv2.putText(
                     img, # Image
                     name[:10], # Label
                     (xmin + 4, ymin + 10), # Where to draw text
@@ -122,14 +144,9 @@ class ImgInference(Thread):
                     (255, 255, 90), # Color
                     thickness=1, # Thickness of font
                 )
-
-
             # Send back the prepared image to display in the main thread.
             self.display_queue.put(img, block=True, timeout=5)
-
-            # Re-Queue the ScreenShotter to get another image from the screen.
-            self.screenshot_queue.task_done()
-
+            self.draw_queue.task_done()
 
 
 # Main program start thread.
@@ -137,12 +154,16 @@ def run():
 
     # Queue for storing screenshots to send to inference thread.
     screenshot_queue = Queue(maxsize=3)
+    # Queue for drawing labels onto screenshots.
+    draw_queue = Queue(maxsize=3)
     # Queue for sending labeled screenshots to be displayed in main thread.
     display_queue = Queue(maxsize=3)
     # Thread for retrieving screenshots from the screen.
     screenShotter = ScreenShotter(screenshot_queue)
+    # Thread for drawing labels onto screenshots.
+    draw = DrawObjects(draw_queue, display_queue)
     # Thread for object detection and labeling.
-    inference = ImgInference(screenshot_queue, display_queue)
+    inference = ImgInference(screenshot_queue, draw_queue)
     # Wait for pytorch model to be loaded.
     while not inference.done:
         time.sleep(0.05)
@@ -152,8 +173,8 @@ def run():
     
     # Launch threads.
     inference.start()
+    draw.start()
     screenShotter.start()
-
     # Begin the main loop infinetly until 'Q' is pressed.
     while True:
         # Get the most recently prepared image from the display_queue.
@@ -173,7 +194,10 @@ def run():
 
             # Measure FPS, show queue sizes for debugging purposes
             sys.stdout.write(
-                f"fps: {frames/(time.time() - last_time)}, dqsize: {display_queue.qsize()}, qsize:{screenshot_queue.qsize()}\n"
+                f"FPS: {frames/(time.time() - last_time)},\n"+
+                f"Display Queue Size: {display_queue.qsize()},\n"+
+                f"Screenshot Queue Size: {screenshot_queue.qsize()},\n"+
+                f"DrawObjects Queue Size: {draw_queue.qsize()}\n"
             )
             sys.stdout.flush()
 
