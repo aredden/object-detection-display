@@ -1,4 +1,4 @@
-black==21.9b0
+black==24.3.0
 mss==6.1.0
 opencv-python==4.5.3.56
 pyyaml==5.4.1
