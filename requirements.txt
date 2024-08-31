@@ -1,6 +1,6 @@
 black==21.9b0
 mss==6.1.0
-opencv-python==4.5.3.56
+opencv-python==4.8.1.78
 pyyaml==5.4.1
 seaborn==0.11.2
 tensorboard==2.6.0
